@@ -5,6 +5,13 @@ Alle vesentlige endringer i dette prosjektet dokumenteres her.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versjonering: [SemVer](https://semver.org/lang/no/)
 
+## [1.1.2] - 2026-01-07
+
+### Fixed
+
+- Added fix for checking path of ogr2ogr and proj on MAC.
+- Added preflight to check if QGIS/GDAL build has FYBA/SOSI-library included and added a warning if that not is the case.
+
 ## [1.1.1] - 2025-12-27
 
 ### Added

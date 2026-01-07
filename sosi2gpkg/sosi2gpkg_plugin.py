@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from qgis.PyQt.QtCore import QCoreApplication, QProcess, Qt
+from qgis.PyQt.QtCore import QCoreApplication, QProcess, Qt, QProcessEnvironment
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import (
     QAction, QFileDialog, QMessageBox, QProgressDialog, QApplication,
@@ -8,6 +8,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import QgsProject, QgsVectorLayer, QgsApplication
 import os
+import sys
 import shutil
 import tempfile
 from pathlib import Path
@@ -20,7 +21,6 @@ from typing import Optional, Tuple
 # Qt5/Qt6-robuste helpers (DialogCode + StandardButton)
 # =========================================================
 def dialog_accepted_code():
-    # Qt6: QDialog.DialogCode.Accepted
     return QDialog.DialogCode.Accepted if hasattr(QDialog, "DialogCode") else QDialog.Accepted
 
 
@@ -35,12 +35,14 @@ def mb_yes():
 def mb_no():
     return QMessageBox.StandardButton.No if hasattr(QMessageBox, "StandardButton") else QMessageBox.No
 
+
 def qproc_merged_channels():
     return (
         QProcess.ProcessChannelMode.MergedChannels
         if hasattr(QProcess, "ProcessChannelMode")
         else QProcess.MergedChannels
     )
+
 
 def qproc_not_running():
     return (
@@ -50,13 +52,12 @@ def qproc_not_running():
     )
 
 
-
-
 # -------------------------
 # Hoveddialog: velg SOSI inn + GPKG ut
+# + Preflight: SOSI-driver tilgjengelig?
 # -------------------------
 class ImportDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, sosi_available: bool = True, sosi_message: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Kartverket – SOSI Import")
         self.setMinimumWidth(720)
@@ -88,6 +89,13 @@ class ImportDialog(QDialog):
 
         root.addWidget(g)
 
+        # Warning/status label (nederst)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        root.addWidget(self.status_label)
+
         # Buttons
         row = QHBoxLayout()
         row.addStretch(1)
@@ -99,13 +107,54 @@ class ImportDialog(QDialog):
         row.addWidget(self.btn_ok)
         root.addLayout(row)
 
+        # Preflight result
+        self._sosi_available = bool(sosi_available)
+        self._sosi_message = sosi_message or ""
+        self.apply_preflight()
+
         self._update_ok()
 
+    def apply_preflight(self):
+        """
+        Dersom SOSI-driver mangler: deaktiver alt bortsett fra Avbryt,
+        og vis forklaring nederst.
+        """
+        if self._sosi_available:
+            self.status_label.setText("")
+            self.status_label.setStyleSheet("")
+            self.btn_in.setEnabled(True)
+            self.btn_out.setEnabled(True)
+            # btn_ok styres av _update_ok()
+            return
+
+        # Disable
+        self.btn_in.setEnabled(False)
+        self.btn_out.setEnabled(False)
+        self.btn_ok.setEnabled(False)
+
+        # Red warning
+        msg = self._sosi_message.strip()
+        if not msg:
+            msg = (
+                "SOSI-driver mangler i GDAL i denne QGIS-installasjonen.\n\n"
+                "Dette skjer ofte på macOS hvis QGIS.app/GDAL er bygget uten FYBA/OpenFYBA.\n"
+                "Da kan ikke SOSI-filer åpnes/konverteres.\n\n"
+                "Løsning: Bruk en QGIS/GDAL-build som inkluderer SOSI-støtte, "
+                "eller en egen ogr2ogr (GDAL) som har SOSI-driver."
+            )
+        self.status_label.setStyleSheet("color: #b00020;")
+        self.status_label.setText(msg)
+
     def _update_ok(self):
+        if not self._sosi_available:
+            self.btn_ok.setEnabled(False)
+            return
         ok = bool(self.in_edit.text().strip()) and bool(self.out_edit.text().strip())
         self.btn_ok.setEnabled(ok)
 
     def pick_input(self):
+        if not self._sosi_available:
+            return
         in_sos, _ = QFileDialog.getOpenFileName(
             self,
             "Velg SOSI-fil",
@@ -124,6 +173,8 @@ class ImportDialog(QDialog):
         self._update_ok()
 
     def pick_output(self):
+        if not self._sosi_available:
+            return
         suggested = self.out_edit.text().strip()
         if not suggested and self.in_edit.text().strip():
             suggested = str(Path(self.in_edit.text().strip()).with_suffix(".gpkg"))
@@ -231,6 +282,10 @@ class Sosi2GpkgPlugin:
         self.action = None
         self.toolbar = None
 
+        # cache preflight
+        self._sosi_available: Optional[bool] = None
+        self._sosi_message: str = ""
+
     def tr(self, text):
         return QCoreApplication.translate("Sosi2GpkgPlugin", text)
 
@@ -241,6 +296,9 @@ class Sosi2GpkgPlugin:
         self.iface.addPluginToMenu(self.tr("&Kartverket"), self.action)
         self.toolbar = self.iface.addToolBar("Kartverket")
         self.toolbar.addAction(self.action)
+
+        # Kjør preflight ved oppstart av plugin (første gang)
+        self._run_preflight()
 
     def unload(self):
         if self.action:
@@ -253,21 +311,210 @@ class Sosi2GpkgPlugin:
             self.action = None
 
     # -------------------------
+    # Preflight
+    # -------------------------
+    def _run_preflight(self):
+        """
+        Sjekker om GDAL/OGR har SOSI-driver tilgjengelig.
+        Cache resultatet slik at dialogen kan bruke det.
+        """
+        if self._sosi_available is not None:
+            return
+
+        try:
+            from osgeo import ogr  # noqa
+            drv = ogr.GetDriverByName("SOSI")
+            if drv is None:
+                self._sosi_available = False
+                self._sosi_message = (
+                    "SOSI-driver mangler i GDAL i denne QGIS-installasjonen.\n\n"
+                    "Dette skjer ofte på macOS hvis QGIS.app/GDAL er bygget uten FYBA/OpenFYBA.\n"
+                    "Da kan ikke SOSI-filer åpnes eller konverteres.\n\n"
+                    "Løsning:\n"
+                    "• Bruk en QGIS/GDAL-build som inkluderer SOSI-støtte, eller\n"
+                    "• Installer/bygg GDAL med FYBA/OpenFYBA og bruk en ogr2ogr derfra."
+                )
+            else:
+                self._sosi_available = True
+                self._sosi_message = ""
+        except Exception as e:
+            # Hvis osgeo import feiler, skal dialogen fortsatt kunne åpnes,
+            # men den skal være deaktivert med forklaring.
+            self._sosi_available = False
+            self._sosi_message = (
+                "Kunne ikke laste GDAL/OGR (osgeo) i denne QGIS-installasjonen.\n\n"
+                f"Feil: {e}"
+            )
+
+    # -------------------------
     # Helpers
     # -------------------------
+    def _is_exec(self, path: str) -> bool:
+        if not path:
+            return False
+        try:
+            return os.path.isfile(path) and os.access(path, os.X_OK)
+        except Exception:
+            return False
+
     def find_ogr2ogr(self) -> str:
-        prefix = QgsApplication.prefixPath()
-        candidates = [
-            os.path.join(prefix, "bin", "ogr2ogr.exe"),
-            os.path.join(prefix, "apps", "gdal", "bin", "ogr2ogr.exe"),
-            os.path.join(prefix, "bin", "ogr2ogr"),
-            os.path.join(prefix, "apps", "gdal", "bin", "ogr2ogr"),
-            shutil.which("ogr2ogr"),
-        ]
+        # 1) PATH først
+        which_path = shutil.which("ogr2ogr")
+        if which_path and os.path.isfile(which_path):
+            return which_path
+
+        prefix = os.path.normpath(QgsApplication.prefixPath() or "")
+
+        appdir = None
+        try:
+            if hasattr(QgsApplication, "applicationDirPath"):
+                appdir = os.path.normpath(QgsApplication.applicationDirPath() or "")
+        except Exception:
+            appdir = None
+
+        candidates = []
+
+        if sys.platform.startswith("win"):
+            candidates += [
+                os.path.join(prefix, "bin", "ogr2ogr.exe"),
+                os.path.join(prefix, "..", "..", "bin", "ogr2ogr.exe"),
+                os.path.join(prefix, "..", "bin", "ogr2ogr.exe"),
+                os.path.join(prefix, "apps", "gdal", "bin", "ogr2ogr.exe"),
+            ]
+        elif sys.platform == "darwin":
+            if prefix.lower().endswith(".app"):
+                candidates += [
+                    os.path.join(prefix, "Contents", "MacOS", "bin", "ogr2ogr"),
+                    os.path.join(prefix, "Contents", "MacOS", "ogr2ogr"),
+                ]
+            candidates += [
+                os.path.join(prefix, "bin", "ogr2ogr"),
+                os.path.join(prefix, "..", "MacOS", "bin", "ogr2ogr"),
+            ]
+            if appdir:
+                candidates += [
+                    os.path.join(appdir, "bin", "ogr2ogr"),
+                    os.path.join(appdir, "ogr2ogr"),
+                ]
+        else:
+            candidates += [
+                os.path.join(prefix, "bin", "ogr2ogr"),
+                os.path.join(prefix, "..", "bin", "ogr2ogr"),
+            ]
+
+        # de-dupe + normalize
+        normed = []
+        seen = set()
         for c in candidates:
-            if c and os.path.exists(c):
+            if not c:
+                continue
+            c = os.path.normpath(c)
+            if c in seen:
+                continue
+            seen.add(c)
+            normed.append(c)
+
+        for c in normed:
+            if self._is_exec(c):
                 return c
-        raise RuntimeError("Fant ikke ogr2ogr. Sjekk QGIS-installasjonen/OSGeo4W eller PATH.")
+
+        if sys.platform.startswith("win"):
+            alt = shutil.which("ogr2ogr.exe")
+            if alt and os.path.isfile(alt):
+                return alt
+
+        msg = (
+            "Fant ikke ogr2ogr.\n\n"
+            f"platform: {sys.platform}\n"
+            f"prefixPath: {prefix}\n"
+            f"applicationDirPath: {appdir}\n"
+            f"which('ogr2ogr'): {which_path}\n"
+            "Forsøkte stier:\n - " + "\n - ".join(normed)
+        )
+        raise RuntimeError(msg)
+
+    def build_ogr_env(self, ogr2ogr_path: str) -> QProcessEnvironment:
+        """
+        Sørger for at ekstern ogr2ogr-prosess på macOS (og noen Linux-oppsett)
+        får PROJ/GDAL paths.
+        """
+        env = QProcessEnvironment.systemEnvironment()
+
+        # Prepend PATH med mappen til ogr2ogr
+        ogr_dir = os.path.dirname(os.path.normpath(ogr2ogr_path))
+        old_path = env.value("PATH") or ""
+        if ogr_dir and ogr_dir not in old_path.split(os.pathsep):
+            env.insert("PATH", ogr_dir + os.pathsep + old_path)
+
+        try:
+            from osgeo import gdal, osr  # type: ignore
+        except Exception:
+            return env
+
+        # Finn QGIS.app root (macOS fallbacks)
+        qgis_app = None
+        prefix = os.path.normpath(QgsApplication.prefixPath() or "")
+        appdir = None
+        try:
+            if hasattr(QgsApplication, "applicationDirPath"):
+                appdir = os.path.normpath(QgsApplication.applicationDirPath() or "")
+        except Exception:
+            appdir = None
+
+        if ".app" in prefix:
+            qgis_app = prefix[: prefix.lower().rfind(".app") + 4]
+        elif appdir and ".app" in appdir:
+            qgis_app = appdir[: appdir.lower().rfind(".app") + 4]
+
+        # GDAL_DATA
+        gdal_data = gdal.GetConfigOption("GDAL_DATA") or os.environ.get("GDAL_DATA")
+        if not gdal_data and qgis_app:
+            cand = os.path.join(qgis_app, "Contents", "Resources", "qgis", "gdal")
+            if os.path.isdir(cand):
+                gdal_data = cand
+        if gdal_data:
+            env.insert("GDAL_DATA", gdal_data)
+
+        # GDAL_DRIVER_PATH (plugins)
+        gdal_driver_path = gdal.GetConfigOption("GDAL_DRIVER_PATH") or os.environ.get("GDAL_DRIVER_PATH")
+        if not gdal_driver_path and qgis_app:
+            driver_candidates = [
+                os.path.join(qgis_app, "Contents", "PlugIns", "gdalplugins"),
+                os.path.join(qgis_app, "Contents", "Resources", "qgis", "gdalplugins"),
+                os.path.join(qgis_app, "Contents", "Resources", "gdalplugins"),
+            ]
+            for d in driver_candidates:
+                if os.path.isdir(d):
+                    gdal_driver_path = d
+                    break
+        if gdal_driver_path:
+            env.insert("GDAL_DRIVER_PATH", gdal_driver_path)
+
+        # PROJ: velg path som faktisk inneholder proj.db
+        proj_db_dir = None
+        try:
+            paths = osr.GetPROJSearchPaths()
+        except Exception:
+            paths = []
+
+        for p in (paths or []):
+            if p and os.path.isfile(os.path.join(p, "proj.db")):
+                proj_db_dir = p
+                break
+
+        if not proj_db_dir and qgis_app:
+            cand = os.path.join(qgis_app, "Contents", "Resources", "qgis", "proj")
+            if os.path.isfile(os.path.join(cand, "proj.db")):
+                proj_db_dir = cand
+
+        if not proj_db_dir:
+            proj_db_dir = os.environ.get("PROJ_DATA") or os.environ.get("PROJ_LIB")
+
+        if proj_db_dir:
+            env.insert("PROJ_DATA", proj_db_dir)
+            env.insert("PROJ_LIB", proj_db_dir)
+
+        return env
 
     def extract_koordsys(self, src_path: str) -> Optional[int]:
         try:
@@ -293,7 +540,6 @@ class Sosi2GpkgPlugin:
         return k in (22, 23, 24, 25)
 
     def make_workaround_copy(self, src_path: str, force_45: bool = True, target_encoding: str = "iso-8859-10") -> str:
-        """Workaround: bytt ..TEGNSETT og evt ..SOSI-VERSJON, skriv som ISO-8859-10."""
         src = Path(src_path)
         tmpdir = Path(tempfile.mkdtemp(prefix="qgis_sosi_"))
         dst = tmpdir / (src.stem + "_workaround.sos")
@@ -372,6 +618,7 @@ class Sosi2GpkgPlugin:
         proc.setProgram(ogr2ogr_path)
         proc.setArguments(args)
         proc.setProcessChannelMode(qproc_merged_channels())
+        proc.setProcessEnvironment(self.build_ogr_env(ogr2ogr_path))
 
         rx_pct = re.compile(r"(\d{1,3})\s*%")
         rx_dots = re.compile(r"(?:^|\s)(\d{1,3})(?=\.+)")
@@ -380,8 +627,12 @@ class Sosi2GpkgPlugin:
         out_all = ""
 
         proc.start()
-        if not proc.waitForStarted(5000):
-            raise RuntimeError("Klarte ikke å starte ogr2ogr-prosessen.")
+        if not proc.waitForStarted(8000):
+            raise RuntimeError(
+                "Klarte ikke å starte ogr2ogr-prosessen.\n\n"
+                f"Program: {ogr2ogr_path}\n"
+                f"Args: {' '.join(args)}"
+            )
 
         while True:
             QApplication.processEvents()
@@ -426,7 +677,6 @@ class Sosi2GpkgPlugin:
 
             if proc.state() == qproc_not_running():
                 break
-
 
         rest = bytes(proc.readAll()).decode("utf-8", errors="replace")
         if rest:
@@ -483,14 +733,21 @@ class Sosi2GpkgPlugin:
     # Main
     # -------------------------
     def run(self):
-        try:
-            from osgeo import ogr  # noqa
-        except Exception as e:
-            QMessageBox.critical(self.iface.mainWindow(), self.tr("SOSI Import"), str(e))
+        # Sørg for at preflight er kjørt
+        self._run_preflight()
+
+        # Åpne dialogen uansett, men deaktiver den hvis SOSI ikke finnes
+        dlg = ImportDialog(
+            self.iface.mainWindow(),
+            sosi_available=bool(self._sosi_available),
+            sosi_message=self._sosi_message
+        )
+        if dlg.exec() != dialog_accepted_code():
             return
 
-        dlg = ImportDialog(self.iface.mainWindow())
-        if dlg.exec() != dialog_accepted_code():
+        # Hvis SOSI ikke finnes skal OK aldri være tilgjengelig,
+        # men for sikkerhets skyld:
+        if not self._sosi_available:
             return
 
         in_sos, out_gpkg = dlg.get_values()

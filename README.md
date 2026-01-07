@@ -1,51 +1,68 @@
-# SOSI Import (QGIS plugin)
+# SOSI Import (QGIS Plugin)
 
-QGIS-plugin for å importere SOSI og konvertere til GeoPackage (GPKG). Resultatet lastes automatisk inn i prosjektet.
+A QGIS plugin for importing **SOSI** files and converting them to **GeoPackage (GPKG)**.  
+The resulting layers are automatically loaded into the current QGIS project.
 
-## Funksjoner
+## Features
 
-- **Importer SOSI → GeoPackage**: konverterer med `ogr2ogr` og legger alle lag inn i QGIS-prosjektet
-- **Støtte for ukjent/manglende KOORDSYS**: dersom `KOORDSYS` mangler eller er ukjent (f.eks. `99`), får du en dialog der du kan velge riktig input-CRS og eventuelt transformere til en annen CRS
+- **Import SOSI → GeoPackage (GPKG)**  
+  Converts using `ogr2ogr` and loads all layers from the GeoPackage into the QGIS project.
 
-> Merk: Under import bygges **spatial index ikke** for ytelse.
-> Bygg spatial index senere i QGIS ved behov.
+- **Handles unknown/missing `KOORDSYS`**  
+  If `KOORDSYS` is missing or unknown (e.g. `99`), the plugin shows a dialog where you can:
 
-## Krav
+  - choose the correct **Input CRS** (required)
+  - optionally **transform** to a different **Output CRS**
 
-- QGIS >= 3.22
-- Testet på:
-  - QGIS 3.40.x (Qt5)
-  - QGIS 3.44.6 (Qt 6.8.1)
-- GDAL/OGR følger med QGIS (pluginen bruker `ogr2ogr` fra QGIS-installasjonen)
+- **Preflight check: SOSI driver availability**  
+  On startup / when opening the dialog, the plugin checks whether GDAL/OGR has the **`SOSI`** driver available.
+  - If **SOSI is missing**, the dialog shows an explanatory warning and the action buttons are disabled.
+  - This is common on **macOS** where some QGIS/GDAL builds do not include SOSI/FYBA support.
 
-## Installering (fra ZIP)
+> Note: During import the plugin **does not build spatial indexes** for performance.  
+> Build spatial indexes afterwards in QGIS if needed.
 
-1. Last ned plugin-zip (`sosi2gpkg_*.zip`)
-2. QGIS: **Plugins → Manage and Install Plugins… → Install from ZIP**
-3. Velg zip-fila
+## Requirements
 
-## Bruk
+- QGIS **>= 3.22**
+- Tested on:
+  - QGIS **3.40.x** (Qt5)
+  - QGIS **3.44.6** (Qt 6.8.x)
+- GDAL/OGR is bundled with QGIS (the plugin uses `ogr2ogr` from your QGIS installation)
 
-1. Klikk plugin-ikonet i verktøylinjen (Kartverket)
-2. Velg **SOSI innfil** og **GPKG utfil**
-3. Trykk **Importer**
-4. Hvis `KOORDSYS` er ukjent/mangler: velg riktig **Input CRS** (påkrevd) og eventuell **Output CRS**
+## macOS notes (ogr2ogr, PROJ and SOSI support)
 
-## Bygge spatial index etterpå (anbefalt ved store lag)
+### 1) `ogr2ogr` discovery on macOS
 
-- Åpne **Processing Toolbox**
-- Kjør **Create spatial index** på lagene i GeoPackage
+On macOS, QGIS is distributed as an app bundle (`QGIS.app`), and `ogr2ogr` is often located inside the bundle.
+The plugin includes a robust `ogr2ogr` lookup that works across:
 
-## Utvikling
+- Windows (OSGeo4W / standalone)
+- macOS (QGIS.app bundle paths)
+- Linux
 
-Repoet inneholder plugin-mappa `sosi2gpkg/`. Når du lager ZIP for QGIS må `sosi2gpkg/` ligge på toppnivå i zip-en.
+### 2) PROJ database (`proj.db`) when running external `ogr2ogr`
 
-## Lisens
+When `ogr2ogr` is launched as an external process on macOS, it may not automatically inherit QGIS’ internal PROJ/GDAL
+configuration. If PROJ cannot find its database (`proj.db`), conversions can fail with messages like:
 
-Se `LICENSE`.
+- `PROJ: ... no database context specified`
+- `Cannot parse CRS ...`
 
-## Feil og ønsker
+To avoid this, the plugin passes relevant environment variables to the `ogr2ogr` process, including:
 
-Legg inn issues i GitHub:
+- `PROJ_DATA` / `PROJ_LIB` (pointing to a directory that contains `proj.db`)
+- `GDAL_DATA`
+- (optionally) `GDAL_DRIVER_PATH` when available
 
-- https://github.com/tompreik-kv/sosi2gpkg/issues
+### 3) SOSI driver availability (most important on macOS)
+
+Even if `ogr2ogr` is found and PROJ works, SOSI import requires the **GDAL SOSI driver**.
+If the driver is not present, GDAL will not be able to open `.sos` files.
+
+You can verify driver availability in **QGIS Python Console**:
+
+```python
+from osgeo import ogr
+print(ogr.GetDriverByName("SOSI"))
+```
