@@ -1,0 +1,13 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sosi2gpkg
+  title: SOSI Import
+  tags:
+    - public
+spec:
+  type: library
+  owner: group:default/kartdata
+  lifecycle: production
+  dependsOn:
+    - component:default/fyba
