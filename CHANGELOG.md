@@ -5,6 +5,16 @@ Alle vesentlige endringer i dette prosjektet dokumenteres her.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versjonering: [SemVer](https://semver.org/lang/no/)
 
+## [1.2.0] - 2026-02-18
+
+### Added
+
+- Added support for Raster-SOSI (.RASTER) by generating georeferencing files and loading imagery directly in QGIS.
+
+### Fixed
+
+- Fixed incorrect raster placement in QGIS by creating a GDAL .vrt with explicit GeoTransform + CRS (avoids worldfile/aux.xml issues where rasters were loaded in pixel coordinates).
+
 ## [1.1.2] - 2026-01-07
 
 ### Fixed
