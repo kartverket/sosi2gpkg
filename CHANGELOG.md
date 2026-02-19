@@ -5,6 +5,12 @@ Alle vesentlige endringer i dette prosjektet dokumenteres her.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versjonering: [SemVer](https://semver.org/lang/no/)
 
+## [1.2.1] - 2026-02-19
+
+### Added
+
+- Added support for handling NTM coordinates from 5 to 30 after issue/input from user 'johmyd'.
+
 ## [1.2.0] - 2026-02-18
 
 ### Added
