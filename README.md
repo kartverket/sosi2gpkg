@@ -1,25 +1,40 @@
 # SOSI Import (QGIS Plugin)
 
-A QGIS plugin for importing **SOSI** files and converting them to **GeoPackage (GPKG)**.  
+A QGIS plugin for importing **SOSI** files into QGIS.
+
+- **Vector SOSI** files are converted to **GeoPackage (GPKG)** using `ogr2ogr`.
+- **Raster-SOSI** files (`.RASTER`) are imported by generating georeferencing and loading the image directly in QGIS.
+
 The resulting layers are automatically loaded into the current QGIS project.
 
 ## Features
 
-- **Import SOSI → GeoPackage (GPKG)**  
+- **Import Vector SOSI → GeoPackage (GPKG)**  
   Converts using `ogr2ogr` and loads all layers from the GeoPackage into the QGIS project.
 
+- **Import Raster-SOSI (`.RASTER`) imagery**  
+  If the SOSI file contains **only** a `.RASTER` section (no vector objects), the plugin will:
+  - locate the referenced image file (`..BILDE-FIL`)
+  - derive extent from the `.RASTER ..NØ` coordinates (respecting `..ENHET`)
+  - use `..BILDE-SYS` (preferred) / `..KOORDSYS` to determine CRS when possible
+  - generate georeferencing files (worldfile + `.prj`)
+  - **create a GDAL `.vrt` with explicit GeoTransform + CRS** and load the VRT in QGIS for correct placement
+
+  > Why VRT? In some setups QGIS/GDAL may list the worldfile/PRJ as “sidecar/attachments” but still load the image in
+  > pixel coordinates (extent like `0..width, -height..0`). The VRT makes the georeferencing unambiguous.
+
 - **Handles unknown/missing `KOORDSYS`**  
-  If `KOORDSYS` is missing or unknown (e.g. `99`), the plugin shows a dialog where you can:
-
+  If `KOORDSYS`/`BILDE-SYS` is missing or unknown, the plugin shows a dialog where you can:
   - choose the correct **Input CRS** (required)
-  - optionally **transform** to a different **Output CRS**
+  - optionally **transform** to a different **Output CRS** (vector import)
 
-- **Preflight check: SOSI driver availability**  
+- **Preflight check: SOSI driver availability (vector import)**  
   On startup / when opening the dialog, the plugin checks whether GDAL/OGR has the **`SOSI`** driver available.
-  - If **SOSI is missing**, the dialog shows an explanatory warning and the action buttons are disabled.
-  - This is common on **macOS** where some QGIS/GDAL builds do not include SOSI/FYBA support.
+  - If **SOSI is missing**, the plugin shows an explanatory warning.
+  - **Vector conversion is not available** without the SOSI driver.
+  - **Raster-SOSI import still works** (it does not depend on the OGR SOSI driver).
 
-> Note: During import the plugin **does not build spatial indexes** for performance.  
+> Note: During vector import the plugin **does not build spatial indexes** for performance.  
 > Build spatial indexes afterwards in QGIS if needed.
 
 ## Requirements
@@ -29,6 +44,22 @@ The resulting layers are automatically loaded into the current QGIS project.
   - QGIS **3.40.x** (Qt5)
   - QGIS **3.44.6** (Qt 6.8.x)
 - GDAL/OGR is bundled with QGIS (the plugin uses `ogr2ogr` from your QGIS installation)
+
+## Raster-SOSI notes
+
+### Image file location (`..BILDE-FIL`)
+
+For Raster-SOSI, the SOSI file references an image file, for example:
+
+- `..BILDE-FIL "TT-13242.jpg"`
+
+If the path is relative, the plugin expects the image to be in the **same folder** as the SOSI file.
+
+### CRS choice: `BILDE-SYS` vs `KOORDSYS`
+
+Raster-SOSI commonly provides `..BILDE-SYS` inside the `.RASTER` group.  
+The plugin **prefers `BILDE-SYS`** when present (this often matches how FYSAK places the raster).  
+If `BILDE-SYS` is missing, the plugin falls back to `KOORDSYS`.
 
 ## macOS notes (ogr2ogr, PROJ and SOSI support)
 
@@ -57,8 +88,8 @@ To avoid this, the plugin passes relevant environment variables to the `ogr2ogr`
 
 ### 3) SOSI driver availability (most important on macOS)
 
-Even if `ogr2ogr` is found and PROJ works, SOSI import requires the **GDAL SOSI driver**.
-If the driver is not present, GDAL will not be able to open `.sos` files.
+Even if `ogr2ogr` is found and PROJ works, **vector SOSI import** requires the **GDAL SOSI driver**.
+If the driver is not present, GDAL will not be able to open `.sos` files for conversion.
 
 You can verify driver availability in **QGIS Python Console**:
 
@@ -66,3 +97,5 @@ You can verify driver availability in **QGIS Python Console**:
 from osgeo import ogr
 print(ogr.GetDriverByName("SOSI"))
 ```
+
+If this prints None, install/use a QGIS/GDAL build that includes SOSI/FYBA support (or use an external GDAL build that does).
