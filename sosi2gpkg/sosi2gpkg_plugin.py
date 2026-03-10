@@ -67,6 +67,13 @@ def qproc_not_running():
         else QProcess.NotRunning
     )
 
+def qt_text_selectable_by_mouse():
+    return (
+        Qt.TextInteractionFlag.TextSelectableByMouse
+        if hasattr(Qt, "TextInteractionFlag")
+        else Qt.TextSelectableByMouse
+    )
+
 
 # -------------------------
 # Hoveddialog: velg SOSI inn + GPKG ut
@@ -107,7 +114,7 @@ class ImportDialog(QDialog):
         # Status/varsel
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.status_label.setTextInteractionFlags(qt_text_selectable_by_mouse())
         root.addWidget(self.status_label)
 
         # Buttons

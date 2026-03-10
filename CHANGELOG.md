@@ -5,6 +5,16 @@ Alle vesentlige endringer i dette prosjektet dokumenteres her.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)  
 Versjonering: [SemVer](https://semver.org/lang/no/)
 
+## [1.3.0] - 2026-03-10
+
+### Fixed
+
+- Fixed icon to work with both default and dark themes.
+
+### Fixed
+
+- Fixed Qt6 compatibility by replacing `Qt.TextSelectableByMouse` with the Qt5/Qt6-compatible `Qt.TextInteractionFlag.TextSelectableByMouse`.
+
 ## [1.2.1] - 2026-02-19
 
 ### Added
